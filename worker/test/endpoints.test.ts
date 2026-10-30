@@ -176,6 +176,20 @@ describe("/api/extract", () => {
     expect(String(req.system)).toContain("Maria Ortiz's email");
   });
 
+  it("quote check end to end: straight-quote, hyphen quote matches a curly, en-dash body", async () => {
+    const { env } = await setup();
+    const b = extractBody();
+    b.threads[0]!.messages[0]!.body = "I\u2019ll send the \u201Crevised\u201D quote \u2013 soft-close hinges \u2013 by Monday\u2026";
+    mock.replies.push({
+      tool: "record_items",
+      input: { commitments: [commitment(`I'll send the "revised" quote - soft-close hinges - by Monday...`)], decisions: [] },
+    });
+    const r = await call(env, "/api/extract", b);
+    expect(r.status).toBe(200);
+    expect(r.json.commitments).toHaveLength(1);
+    expect(r.json.dropped).toEqual([]);
+  });
+
   it("item limits: 21 threads or 16 messages -> 413", async () => {
     const { env } = await setup();
     const b = extractBody();
