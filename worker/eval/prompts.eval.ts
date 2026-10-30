@@ -8,7 +8,7 @@
  */
 import { appendFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { callTool, type Meter } from "../src/claude";
+import { ANTHROPIC_URL, ANTHROPIC_VERSION, callTool, type Meter } from "../src/claude";
 import { draftCall } from "../src/endpoints/draft";
 import { extractCall, quoteCheck, type Commitment, type Decision } from "../src/endpoints/extract";
 import { completeResults, sortCall } from "../src/endpoints/sort";
@@ -27,6 +27,33 @@ const overlaps = (quote: string, phrase: string) => { const q = normalize(quote)
 const pct = (a: number, b: number) => (b === 0 ? "n/a" : `${Math.round((100 * a) / b)}%`);
 
 describe.skipIf(!KEY)("prompt eval (live models)", () => {
+  // Diagnostics: the Worker never reads API error text (it could echo mail). Here the mail is synthetic,
+  // so print the status and error message of the exact request shape, to catch shape problems early.
+  it("preflight: the request shape is accepted for each model", async () => {
+    const results: string[] = [];
+    const shapes: Array<[string, ReturnType<typeof sortCall> | ReturnType<typeof extractCall> | ReturnType<typeof draftCall>]> = [
+      ["sort", sortCall(MODELS.sort, TESTER, SORT_CASES.slice(0, 1).map((c) => c.msg))],
+      ["extract", extractCall(MODELS.extract, TESTER, TODAY, CASES.slice(0, 1).map((c) => c.thread))],
+      ["draft", draftCall(MODELS.draft, TESTER, DRAFT_CASES[0]!.data, false)],
+    ];
+    for (const [name, call] of shapes) {
+      const res = await fetch(ANTHROPIC_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-api-key": KEY, "anthropic-version": ANTHROPIC_VERSION },
+        body: JSON.stringify({ model: call.model, max_tokens: call.maxTokens, temperature: call.temperature, system: call.system, tools: [call.tool], tool_choice: { type: "tool", name: call.tool.name }, messages: [{ role: "user", content: call.user }] }),
+      });
+      const text = await res.text();
+      let detail = "";
+      try { const j = JSON.parse(text); detail = res.ok ? `stop=${j.stop_reason} blocks=${(j.content ?? []).map((c: { type: string }) => c.type).join(",")}` : `${j.error?.type}: ${j.error?.message}`; } catch { detail = text.slice(0, 300); }
+      results.push(`${name} (${call.model}): HTTP ${res.status} ${detail}`);
+    }
+    say("## Preflight");
+    for (const r of results) say(`- ${r}`);
+    say();
+    flush();
+    expect(results.every((r) => r.includes("HTTP 200"))).toBe(true);
+  }, 120_000);
+
   it("extract: promises and decisions", async () => {
     const meter: Meter = { model: null, in: 0, out: 0 };
     const threads = CASES.map((c) => c.thread);
