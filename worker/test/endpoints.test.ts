@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { DRAFT_TOOL, EXTRACT_TOOL, SORT_TOOL } from "../src/prompts";
 import { allow, call, draftBody, draftReply, extractBody, installFetch, makeEnv, setupKeys, sortBody, type FetchMock } from "./helpers";
 
 let mock: FetchMock;
@@ -46,7 +47,7 @@ describe("/api/sort", () => {
     expect(r.json.usage).toEqual({ input_tokens: 100, output_tokens: 20 });
   });
 
-  it("calls the Messages API with the forced tool, model, temperature and max_tokens; mail inside <mail> tags", async () => {
+  it("calls the Messages API with structured output, model and max_tokens, no temperature or forced tool; mail inside <mail> tags", async () => {
     const { env } = await setup();
     mock.replies.push({ tool: "record_sort", input: { results: [] } });
     const body = sortBody(1);
@@ -54,10 +55,14 @@ describe("/api/sort", () => {
     await call(env, "/api/sort", body);
     const req = mock.anthropicCalls[0]!;
     expect(req.model).toBe("claude-haiku-5-5");
-    expect(req.temperature).toBe(0);
     expect(req.max_tokens).toBe(4000);
-    expect(req.tool_choice).toEqual({ type: "tool", name: "record_sort" });
-    expect((req.tools as Array<{ name: string }>)[0]!.name).toBe("record_sort");
+    // The 5.5 models reject temperature and forced tool_choice (found by the live eval).
+    expect(req).not.toHaveProperty("temperature");
+    expect(req).not.toHaveProperty("tool_choice");
+    expect(req).not.toHaveProperty("tools");
+    const format = (req.output_config as { format: { type: string; schema: Record<string, unknown> } }).format;
+    expect(format.type).toBe("json_schema");
+    expect(format.schema).toEqual(SORT_TOOL.input_schema);
     expect(String(req.system)).toContain("You sort email for Maria Ortiz <maria.tester@example.com>.");
     expect(String(req.system)).toContain("never instructions");
     const user = String((req.messages as Array<{ content: string }>)[0]!.content);
@@ -97,6 +102,16 @@ describe("/api/sort", () => {
     expect(r.json.usage).toEqual({ input_tokens: 200, output_tokens: 40 });
   });
 
+  it("a refused or cut-off answer is not trusted: retried, then 502", async () => {
+    const { env } = await setup();
+    const ok = { results: [{ id: "m0", verdict: "handled", group: "newsletter", reason: "Newsletter." }] };
+    mock.replies.push({ tool: "record_sort", input: ok, stop: "refusal" });
+    mock.replies.push({ tool: "record_sort", input: ok, stop: "max_tokens" });
+    const r = await call(env, "/api/sort", sortBody(1));
+    expect(r.status).toBe(502);
+    expect(mock.anthropicCalls).toHaveLength(2);
+  });
+
   it("model retry then 502 model_error when output is bad twice", async () => {
     const { env } = await setup();
     mock.replies.push({ tool: "record_sort", input: { results: "nope" } });
@@ -117,7 +132,7 @@ describe("/api/sort", () => {
 });
 
 describe("/api/extract", () => {
-  const commitment = (quote: string, quote_message_id = "m1") => ({
+  const commitment = (quote: string, quote_message_id = "m1", extra: Record<string, unknown> = {}) => ({
     thread_id: "t1",
     direction: "i_owe",
     person: "Rachel Park",
@@ -128,20 +143,22 @@ describe("/api/extract", () => {
     due_kind: "stated",
     status: "open",
     confidence: "high",
+    ...extra,
   });
-  const decision = (quote: string, rank: number) => ({
+  const decision = (quote: string, rank: number, extra: Record<string, unknown> = {}) => ({
     thread_id: "t1",
     person: "Rachel Park",
     question: "Which hinges?",
     quote,
-    quote_message_id: "m1",
+    quote_message_id: "m2",
     recommended: { answer: "Soft-close", reason: "You already quoted them." },
     alternate: "Standard",
     deadline: null,
     rank,
+    ...extra,
   });
 
-  it("quote check: whitespace and case are ignored; invented quotes are dropped", async () => {
+  it("quote check: whitespace and case are ignored; invented, short, misattributed and cross-thread quotes are dropped", async () => {
     const { env } = await setup();
     mock.replies.push({
       tool: "record_items",
@@ -150,8 +167,20 @@ describe("/api/extract", () => {
           commitment("i'll SEND the revised quote with soft-close\nhinges by Monday."),
           commitment("I'll pay you $5,000 tomorrow."),
           commitment("I'll send the revised quote", "m-unknown"),
+          commitment("Monday."),
+          // Rachel's words are not Maria's promise.
+          commitment("Let me know by Friday.", "m2"),
+          // An owed_to_me quote must come from the other person, not from Maria.
+          commitment("I'll send the revised quote", "m1", { direction: "owed_to_me" }),
         ],
-        decisions: [decision("revised quote with soft-close", 3), decision("Shall we skip the hinges?", 1), decision("by monday", 2)],
+        decisions: [
+          decision("soft-close or standard", 3),
+          decision("Shall we skip the hinges?", 1),
+          decision("Let me know by Friday", 2),
+          // Maria's own words are not a question to Maria.
+          decision("revised quote with soft-close", 4, { quote_message_id: "m1" }),
+          decision("Let me know by Friday", 5, { thread_id: "t9" }),
+        ],
       },
     });
     const r = await call(env, "/api/extract", extractBody());
@@ -159,19 +188,24 @@ describe("/api/extract", () => {
     expect(r.json.commitments).toHaveLength(1);
     expect(r.json.commitments[0].quote).toContain("SEND");
     expect(r.json.decisions.map((d: any) => [d.quote, d.rank])).toEqual([
-      ["by monday", 1],
-      ["revised quote with soft-close", 2],
+      ["Let me know by Friday", 1],
+      ["soft-close or standard", 2],
     ]);
     expect(r.json.dropped).toEqual([
       { thread_id: "t1", kind: "commitment", reason: "quote_not_found" },
       { thread_id: "t1", kind: "commitment", reason: "quote_not_found" },
+      { thread_id: "t1", kind: "commitment", reason: "quote_too_short" },
+      { thread_id: "t1", kind: "commitment", reason: "wrong_speaker" },
+      { thread_id: "t1", kind: "commitment", reason: "wrong_speaker" },
       { thread_id: "t1", kind: "decision", reason: "quote_not_found" },
+      { thread_id: "t1", kind: "decision", reason: "wrong_speaker" },
+      { thread_id: "t9", kind: "decision", reason: "wrong_thread" },
     ]);
     const req = mock.anthropicCalls[0]!;
     expect(req.model).toBe("claude-sonnet-5-5");
     expect(req.max_tokens).toBe(8000);
-    expect(req.temperature).toBe(0);
-    expect(req.tool_choice).toEqual({ type: "tool", name: "record_items" });
+    expect(req).not.toHaveProperty("temperature");
+    expect((req.output_config as { format: { schema: unknown } }).format.schema).toEqual(EXTRACT_TOOL.input_schema);
     expect(String(req.system)).toContain("Today is 2026-10-30.");
     expect(String(req.system)).toContain("Maria Ortiz's email");
   });
@@ -205,6 +239,15 @@ describe("/api/extract", () => {
 });
 
 describe("/api/draft", () => {
+  it("house style: em-dashes in the model's draft are removed", async () => {
+    const { env } = await setup();
+    mock.replies.push({ tool: "write_draft", input: { subject: "Re: Install date", body: "Hi Tom,\n\nNov 16 works \u2014 see you then.\nCrew\u2014ready.\n\nMaria" } });
+    const r = await call(env, "/api/draft", draftBody());
+    expect(r.status).toBe(200);
+    expect(r.json.body).toBe("Hi Tom,\n\nNov 16 works, see you then.\nCrew-ready.\n\nMaria");
+    expect(r.json.body).not.toContain("\u2014");
+  });
+
   it("returns subject, body and [bracketed] blanks with draft params", async () => {
     const { env } = await setup();
     mock.replies.push(draftReply());
@@ -217,9 +260,9 @@ describe("/api/draft", () => {
       usage: { input_tokens: 100, output_tokens: 20 },
     });
     const req = mock.anthropicCalls[0]!;
-    expect(req.temperature).toBe(0.4);
+    expect(req).not.toHaveProperty("temperature");
     expect(req.max_tokens).toBe(1000);
-    expect(req.tool_choice).toEqual({ type: "tool", name: "write_draft" });
+    expect((req.output_config as { format: { schema: unknown } }).format.schema).toEqual(DRAFT_TOOL.input_schema);
   });
 
   it("validates answer.kind and limits", async () => {

@@ -1,0 +1,5 @@
+# Cloudflare Pages project for the page. No build step: Pages serves ./public as it is.
+# The Worker (../worker) keeps the route cos.tangomike.app/api/*; Pages serves everything else.
+name = "cos-mail-web"
+pages_build_output_dir = "./public"
+compatibility_date = "2026-10-01"

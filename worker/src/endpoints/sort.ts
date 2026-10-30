@@ -44,6 +44,19 @@ export function completeResults(ids: string[], model: SortResult[]): SortResult[
   });
 }
 
+/** The model call for /sort. Shared with the prompt eval (worker/eval). */
+export function sortCall(model: string, tester: { name: string; email: string }, messages: unknown[]) {
+  return {
+    model,
+    system: sortSystem(tester.name, tester.email),
+    user: `Sort these ${messages.length} messages.\n\n${mailBlock(messages)}`,
+    tool: SORT_TOOL,
+    maxTokens: 4000,
+    temperature: 0,
+    parse: parseSortOutput,
+  };
+}
+
 export const sort: Handler = async (ctx) => {
   const body = obj(ctx.body, "body");
   const mode = parseMode(body);
@@ -63,19 +76,7 @@ export const sort: Handler = async (ctx) => {
 
   await ctx.charge("sort", mode);
 
-  const model = await callTool(
-    ctx.env,
-    {
-      model: ctx.env.MODEL_SORT,
-      system: sortSystem(ctx.tester.name, ctx.tester.email),
-      user: `Sort these ${messages.length} messages.\n\n${mailBlock(messages)}`,
-      tool: SORT_TOOL,
-      maxTokens: 4000,
-      temperature: 0,
-      parse: parseSortOutput,
-    },
-    ctx.meter,
-  );
+  const model = await callTool(ctx.env, sortCall(ctx.env.MODEL_SORT, ctx.tester, messages), ctx.meter);
 
   return {
     results: completeResults(

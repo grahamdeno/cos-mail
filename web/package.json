@@ -1,0 +1,11 @@
+{
+  "name": "cos-mail-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "COS Mail page: a static PWA with no build step and no runtime dependencies. Tests use Node's built-in test runner (Node 22).",
+  "scripts": {
+    "test": "node --test",
+    "typecheck": "tsc -p ."
+  }
+}
