@@ -116,7 +116,8 @@ export async function idToken(opts: TokenOpts = {}): Promise<string> {
 
 // ---------- fetch mock: Google certs and the Anthropic Messages API ----------
 
-export type ModelReply = { tool?: string; input?: unknown; status?: number; text?: string };
+/** A queued model reply. `tool` + `input` become a structured-output JSON text block (the name is only a label). */
+export type ModelReply = { tool?: string; input?: unknown; status?: number; text?: string; stop?: string };
 
 export interface FetchMock {
   certCalls: number;
@@ -146,9 +147,9 @@ export async function installFetch(): Promise<FetchMock> {
       if (reply.status && reply.status !== 200) return new Response("{}", { status: reply.status });
       const content: unknown[] = [];
       if (reply.text) content.push({ type: "text", text: reply.text });
-      if (reply.tool) content.push({ type: "tool_use", id: "toolu_test", name: reply.tool, input: reply.input });
+      if (reply.tool) content.push({ type: "text", text: JSON.stringify(reply.input) });
       return new Response(
-        JSON.stringify({ id: "msg_test", type: "message", role: "assistant", content, usage: { input_tokens: 100, output_tokens: 20 } }),
+        JSON.stringify({ id: "msg_test", type: "message", role: "assistant", content, stop_reason: reply.stop ?? "end_turn", usage: { input_tokens: 100, output_tokens: 20 } }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
     }

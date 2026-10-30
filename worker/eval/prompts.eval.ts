@@ -8,7 +8,7 @@
  */
 import { appendFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { ANTHROPIC_URL, ANTHROPIC_VERSION, callTool, type Meter } from "../src/claude";
+import { ANTHROPIC_URL, ANTHROPIC_VERSION, callTool, requestBody, type Meter } from "../src/claude";
 import { draftCall } from "../src/endpoints/draft";
 import { extractCall, quoteCheck, type Commitment, type Decision } from "../src/endpoints/extract";
 import { completeResults, sortCall } from "../src/endpoints/sort";
@@ -50,18 +50,18 @@ describe.skipIf(!KEY)("prompt eval (live models)", () => {
       const res = await fetch(ANTHROPIC_URL, {
         method: "POST",
         headers: { "content-type": "application/json", "x-api-key": KEY, "anthropic-version": ANTHROPIC_VERSION },
-        body: JSON.stringify({ model: call.model, max_tokens: call.maxTokens, temperature: call.temperature, system: call.system, tools: [call.tool], tool_choice: { type: "tool", name: call.tool.name }, messages: [{ role: "user", content: call.user }] }),
+        body: JSON.stringify(requestBody(call as Parameters<typeof requestBody>[0])),
       });
       const text = await res.text();
       let detail = "";
       try {
         const j = JSON.parse(text);
         if (res.ok) {
-          const block = (j.content ?? []).find((c: { type: string; name?: string }) => c.type === "tool_use" && c.name === call.tool.name);
-          let parsed = "no tool block";
+          const block = (j.content ?? []).find((c: { type: string; text?: string }) => c.type === "text");
+          let parsed = "no text block";
           if (block) {
-            try { parsed = (call.parse as (x: unknown) => unknown)(block.input) === null ? `parse rejected: ${JSON.stringify(block.input).slice(0, 700)}` : "parse ok"; }
-            catch (e) { parsed = `parse threw ${String(e)}`; }
+            try { parsed = (call.parse as (x: unknown) => unknown)(JSON.parse(block.text)) === null ? `parse rejected: ${String(block.text).slice(0, 700)}` : "parse ok"; }
+            catch (e) { parsed = `parse threw ${String(e)}: ${String(block.text).slice(0, 300)}`; }
           }
           detail = `stop=${j.stop_reason} blocks=${(j.content ?? []).map((c: { type: string }) => c.type).join(",")} ${parsed}`;
         } else detail = `${j.error?.type}: ${j.error?.message}`;

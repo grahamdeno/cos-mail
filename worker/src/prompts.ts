@@ -109,11 +109,11 @@ export interface Tool {
   input_schema: Record<string, unknown>;
 }
 
+// Structured-output schemas: every object has additionalProperties false; no length or number limits
+// (the API rejects them), so limits are stated in descriptions and enforced by the parsers.
 const DATE = { type: ["string", "null"], pattern: "^\\d{4}-\\d{2}-\\d{2}$", description: "YYYY-MM-DD or null" };
 const QUOTE = {
   type: "string",
-  minLength: 8,
-  maxLength: 200,
   description: "Exact words copied from the body of quote_message_id, 3 to 30 words, one contiguous piece, no ellipsis.",
 };
 
@@ -122,18 +122,20 @@ export const SORT_TOOL: Tool = {
   description: "Record a verdict for every message id given.",
   input_schema: {
     type: "object",
+    additionalProperties: false,
     required: ["results"],
     properties: {
       results: {
         type: "array",
         items: {
           type: "object",
+          additionalProperties: false,
           required: ["id", "verdict", "group", "reason"],
           properties: {
             id: { type: "string", description: "The message id exactly as given." },
             verdict: { enum: ["needs_you", "handled"] },
             group: { enum: ["receipt", "newsletter", "fyi", "answered_by_other", null], description: "null when verdict is needs_you." },
-            reason: { type: "string", maxLength: 140, description: "Names the sender and says why, in one line." },
+            reason: { type: "string", description: "Names the sender and says why, in one line." },
           },
         },
       },
@@ -146,18 +148,20 @@ export const EXTRACT_TOOL: Tool = {
   description: "Record every commitment and every open decision found. Empty lists when there are none.",
   input_schema: {
     type: "object",
+    additionalProperties: false,
     required: ["commitments", "decisions"],
     properties: {
       commitments: {
         type: "array",
         items: {
           type: "object",
+          additionalProperties: false,
           required: ["thread_id", "direction", "person", "what", "quote", "quote_message_id", "due", "due_kind", "status", "confidence"],
           properties: {
             thread_id: { type: "string" },
             direction: { enum: ["i_owe", "owed_to_me"], description: "i_owe: the user promised. owed_to_me: someone promised the user." },
             person: { type: "string", description: "The other party, never the user." },
-            what: { type: "string", maxLength: 120, description: "The action, starting with a verb." },
+            what: { type: "string", description: "The action, starting with a verb." },
             quote: QUOTE,
             quote_message_id: { type: "string", description: "For i_owe, a message the user wrote. For owed_to_me, a message the other person wrote." },
             due: DATE,
@@ -171,24 +175,26 @@ export const EXTRACT_TOOL: Tool = {
         type: "array",
         items: {
           type: "object",
+          additionalProperties: false,
           required: ["thread_id", "person", "question", "quote", "quote_message_id", "recommended", "alternate", "deadline", "rank"],
           properties: {
             thread_id: { type: "string" },
             person: { type: "string", description: "Who asked." },
-            question: { type: "string", maxLength: 160, description: "The sender's question in plain words, ending in ?" },
+            question: { type: "string", description: "The sender's question in plain words, ending in ?" },
             quote: QUOTE,
             quote_message_id: { type: "string", description: "A message the asker wrote." },
             recommended: {
               type: "object",
+              additionalProperties: false,
               required: ["answer", "reason"],
               properties: {
-                answer: { type: "string", maxLength: 60 },
-                reason: { type: "string", maxLength: 140, description: "One clause, facts from the mail only." },
+                answer: { type: "string" },
+                reason: { type: "string", description: "One clause, facts from the mail only." },
               },
             },
-            alternate: { type: "string", maxLength: 60 },
+            alternate: { type: "string" },
             deadline: DATE,
-            rank: { type: "integer", minimum: 1 },
+            rank: { type: "integer", description: "1 is the most urgent." },
           },
         },
       },
@@ -201,10 +207,11 @@ export const DRAFT_TOOL: Tool = {
   description: "Record the reply.",
   input_schema: {
     type: "object",
+    additionalProperties: false,
     required: ["subject", "body"],
     properties: {
-      subject: { type: "string", maxLength: 200 },
-      body: { type: "string", maxLength: 4000, description: "Greeting, reply and sign-off. Plain text." },
+      subject: { type: "string" },
+      body: { type: "string", description: "Greeting, reply and sign-off. Plain text." },
     },
   },
 };

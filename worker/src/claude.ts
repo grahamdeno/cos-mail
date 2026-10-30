@@ -16,15 +16,18 @@ export interface ToolCall<T> {
   model: string;
   system: string;
   user: string;
+  /** The output schema (its input_schema), sent as structured output. The name is kept for logs and tests. */
   tool: Tool;
   maxTokens: number;
-  temperature: number;
+  /** Not sent: current models reject temperature. Kept so callers can state intent. */
+  temperature?: number;
   /** Return the parsed value, or null when the tool input is invalid. */
   parse: (input: unknown) => T | null;
 }
 
 interface MessagesResponse {
-  content?: Array<{ type?: string; name?: string; input?: unknown }>;
+  content?: Array<{ type?: string; text?: string }>;
+  stop_reason?: string;
   usage?: { input_tokens?: number; output_tokens?: number };
 }
 
@@ -38,15 +41,7 @@ async function attempt<T>(env: Env, call: ToolCall<T>, meter: Meter): Promise<T 
         "x-api-key": env.ANTHROPIC_API_KEY,
         "anthropic-version": ANTHROPIC_VERSION,
       },
-      body: JSON.stringify({
-        model: call.model,
-        max_tokens: call.maxTokens,
-        temperature: call.temperature,
-        system: call.system,
-        tools: [call.tool],
-        tool_choice: { type: "tool", name: call.tool.name },
-        messages: [{ role: "user", content: call.user }],
-      }),
+      body: JSON.stringify(requestBody(call)),
     });
   } catch {
     return null;
@@ -64,18 +59,34 @@ async function attempt<T>(env: Env, call: ToolCall<T>, meter: Meter): Promise<T 
   }
   meter.in += Number(data.usage?.input_tokens ?? 0) || 0;
   meter.out += Number(data.usage?.output_tokens ?? 0) || 0;
-  const block = data.content?.find((c) => c.type === "tool_use" && c.name === call.tool.name);
-  if (!block) return null;
+  // Structured output: the JSON is the text block. A refusal or a cut-off answer is not trusted.
+  if (data.stop_reason === "refusal" || data.stop_reason === "max_tokens") return null;
+  const text = data.content?.find((c) => c.type === "text" && typeof c.text === "string")?.text;
+  if (text === undefined) return null;
   try {
-    return call.parse(block.input);
+    return call.parse(JSON.parse(text));
   } catch {
     return null;
   }
 }
 
 /**
- * A11: Messages API with tool_choice forced to the one tool. One retry on a
- * missing or invalid tool call (or a failed request), then 502 model_error.
+ * The Messages API request. Step 4: structured output (output_config.format, json_schema) instead of a
+ * forced tool call, and no temperature. The 5.5 models reject forced tool_choice and temperature.
+ */
+export function requestBody<T>(call: ToolCall<T>): Record<string, unknown> {
+  return {
+    model: call.model,
+    max_tokens: call.maxTokens,
+    system: call.system,
+    messages: [{ role: "user", content: call.user }],
+    output_config: { format: { type: "json_schema", schema: call.tool.input_schema } },
+  };
+}
+
+/**
+ * Messages API with a structured-output schema. One retry on a missing or invalid
+ * answer (or a failed request), then 502 model_error.
  */
 export async function callTool<T>(env: Env, call: ToolCall<T>, meter: Meter): Promise<T> {
   if (!env.ANTHROPIC_API_KEY) throw new HttpError("internal");

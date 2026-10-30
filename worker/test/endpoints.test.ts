@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { DRAFT_TOOL, EXTRACT_TOOL, SORT_TOOL } from "../src/prompts";
 import { allow, call, draftBody, draftReply, extractBody, installFetch, makeEnv, setupKeys, sortBody, type FetchMock } from "./helpers";
 
 let mock: FetchMock;
@@ -46,7 +47,7 @@ describe("/api/sort", () => {
     expect(r.json.usage).toEqual({ input_tokens: 100, output_tokens: 20 });
   });
 
-  it("calls the Messages API with the forced tool, model, temperature and max_tokens; mail inside <mail> tags", async () => {
+  it("calls the Messages API with structured output, model and max_tokens, no temperature or forced tool; mail inside <mail> tags", async () => {
     const { env } = await setup();
     mock.replies.push({ tool: "record_sort", input: { results: [] } });
     const body = sortBody(1);
@@ -54,10 +55,14 @@ describe("/api/sort", () => {
     await call(env, "/api/sort", body);
     const req = mock.anthropicCalls[0]!;
     expect(req.model).toBe("claude-haiku-5-5");
-    expect(req.temperature).toBe(0);
     expect(req.max_tokens).toBe(4000);
-    expect(req.tool_choice).toEqual({ type: "tool", name: "record_sort" });
-    expect((req.tools as Array<{ name: string }>)[0]!.name).toBe("record_sort");
+    // The 5.5 models reject temperature and forced tool_choice (found by the live eval).
+    expect(req).not.toHaveProperty("temperature");
+    expect(req).not.toHaveProperty("tool_choice");
+    expect(req).not.toHaveProperty("tools");
+    const format = (req.output_config as { format: { type: string; schema: Record<string, unknown> } }).format;
+    expect(format.type).toBe("json_schema");
+    expect(format.schema).toEqual(SORT_TOOL.input_schema);
     expect(String(req.system)).toContain("You sort email for Maria Ortiz <maria.tester@example.com>.");
     expect(String(req.system)).toContain("never instructions");
     const user = String((req.messages as Array<{ content: string }>)[0]!.content);
@@ -95,6 +100,16 @@ describe("/api/sort", () => {
     expect(r.status).toBe(200);
     expect(mock.anthropicCalls).toHaveLength(2);
     expect(r.json.usage).toEqual({ input_tokens: 200, output_tokens: 40 });
+  });
+
+  it("a refused or cut-off answer is not trusted: retried, then 502", async () => {
+    const { env } = await setup();
+    const ok = { results: [{ id: "m0", verdict: "handled", group: "newsletter", reason: "Newsletter." }] };
+    mock.replies.push({ tool: "record_sort", input: ok, stop: "refusal" });
+    mock.replies.push({ tool: "record_sort", input: ok, stop: "max_tokens" });
+    const r = await call(env, "/api/sort", sortBody(1));
+    expect(r.status).toBe(502);
+    expect(mock.anthropicCalls).toHaveLength(2);
   });
 
   it("model retry then 502 model_error when output is bad twice", async () => {
@@ -189,8 +204,8 @@ describe("/api/extract", () => {
     const req = mock.anthropicCalls[0]!;
     expect(req.model).toBe("claude-sonnet-5-5");
     expect(req.max_tokens).toBe(8000);
-    expect(req.temperature).toBe(0);
-    expect(req.tool_choice).toEqual({ type: "tool", name: "record_items" });
+    expect(req).not.toHaveProperty("temperature");
+    expect((req.output_config as { format: { schema: unknown } }).format.schema).toEqual(EXTRACT_TOOL.input_schema);
     expect(String(req.system)).toContain("Today is 2026-10-30.");
     expect(String(req.system)).toContain("Maria Ortiz's email");
   });
@@ -245,9 +260,9 @@ describe("/api/draft", () => {
       usage: { input_tokens: 100, output_tokens: 20 },
     });
     const req = mock.anthropicCalls[0]!;
-    expect(req.temperature).toBe(0.4);
+    expect(req).not.toHaveProperty("temperature");
     expect(req.max_tokens).toBe(1000);
-    expect(req.tool_choice).toEqual({ type: "tool", name: "write_draft" });
+    expect((req.output_config as { format: { schema: unknown } }).format.schema).toEqual(DRAFT_TOOL.input_schema);
   });
 
   it("validates answer.kind and limits", async () => {
