@@ -5,7 +5,7 @@ routes = [{ pattern = "cos.tangomike.app/api/*", zone_name = "tangomike.app" }]
 
 [[kv_namespaces]]
 binding = "COS_KV"
-id = "<filled in after the namespace is created>"
+id = "eafaa4ed820447dda51a75c0343f0a4b"
 
 [vars]
 GOOGLE_CLIENT_ID = "456735134102-53s6afv6b316sj1bes9phmb71rc78mi5.apps.googleusercontent.com"
