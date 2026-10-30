@@ -22,7 +22,17 @@ const MODELS = { sort: process.env.MODEL_SORT ?? "claude-haiku-5-5", extract: pr
 
 const lines: string[] = [];
 const say = (s = "") => { lines.push(s); console.log(s); };
-const flush = () => { if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n"); };
+let flushed = 0;
+const flush = () => {
+  const chunk = lines.slice(flushed);
+  flushed = lines.length;
+  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, chunk.join("\n") + "\n");
+  // Also as one annotation per section, so the results can be read through the checks API.
+  if (process.env.GITHUB_ACTIONS) {
+    const msg = chunk.join("\n").slice(0, 60000).replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+    console.log(`::notice title=${(chunk[0] ?? "eval").replace(/[#:,]/g, "").trim()}::${msg}`);
+  }
+};
 const overlaps = (quote: string, phrase: string) => { const q = normalize(quote), p = normalize(phrase); return q.includes(p) || p.includes(q) || (q.length > 12 && p.includes(q.slice(0, Math.floor(q.length * 0.6)))); };
 const pct = (a: number, b: number) => (b === 0 ? "n/a" : `${Math.round((100 * a) / b)}%`);
 
@@ -44,14 +54,25 @@ describe.skipIf(!KEY)("prompt eval (live models)", () => {
       });
       const text = await res.text();
       let detail = "";
-      try { const j = JSON.parse(text); detail = res.ok ? `stop=${j.stop_reason} blocks=${(j.content ?? []).map((c: { type: string }) => c.type).join(",")}` : `${j.error?.type}: ${j.error?.message}`; } catch { detail = text.slice(0, 300); }
+      try {
+        const j = JSON.parse(text);
+        if (res.ok) {
+          const block = (j.content ?? []).find((c: { type: string; name?: string }) => c.type === "tool_use" && c.name === call.tool.name);
+          let parsed = "no tool block";
+          if (block) {
+            try { parsed = (call.parse as (x: unknown) => unknown)(block.input) === null ? `parse rejected: ${JSON.stringify(block.input).slice(0, 700)}` : "parse ok"; }
+            catch (e) { parsed = `parse threw ${String(e)}`; }
+          }
+          detail = `stop=${j.stop_reason} blocks=${(j.content ?? []).map((c: { type: string }) => c.type).join(",")} ${parsed}`;
+        } else detail = `${j.error?.type}: ${j.error?.message}`;
+      } catch { detail = text.slice(0, 300); }
       results.push(`${name} (${call.model}): HTTP ${res.status} ${detail}`);
     }
     say("## Preflight");
     for (const r of results) say(`- ${r}`);
     say();
     flush();
-    expect(results.every((r) => r.includes("HTTP 200"))).toBe(true);
+    expect(results.every((r) => r.includes("HTTP 200") && r.includes("parse ok"))).toBe(true);
   }, 120_000);
 
   it("extract: promises and decisions", async () => {
