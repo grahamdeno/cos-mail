@@ -46,6 +46,8 @@ Not done yet. It replaces the temporary DNS record, so it waits for Graham.
 - Nothing can send, delete, trash, relabel or import mail. `gmail.js` only allows GET, `POST /drafts` and `PUT /drafts/<id>`.
 - Tokens: the ID token goes only to the Worker, the Gmail token only to Gmail. Neither is written to any storage, cache or log. No refresh tokens, no offline access.
 - The Gmail draft is created only after the 5-second undo window closes. Leaving the page inside the window cancels the action.
-- Every promise and decision carries a quote, and the page checks it against the text it sent, using the Worker's normalization.
+- Every promise and decision carries a quote. The page checks it again, the same way the Worker does: the quote must be in the right thread, at least two words, really in that message, and in the right person's words (the tester's for "I owe", the other person's for "owed to me" and for questions).
+- Notes to self (mail between the tester's own addresses) are neither sorted nor read by the model.
+- Anything shaped like an API key, token or private key is replaced with "[key removed]" before mail leaves the phone.
 - Mail bodies are held in memory for one run. IndexedDB holds derived items only.
 - Mail text goes into the page as text nodes. There is no `innerHTML`.

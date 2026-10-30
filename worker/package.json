@@ -6,7 +6,8 @@
   "description": "COS Mail API Worker: ID-token check, allowlist, daily caps, five endpoints, body-free logs.",
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "eval": "vitest run --config eval/vitest.config.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261030.1",

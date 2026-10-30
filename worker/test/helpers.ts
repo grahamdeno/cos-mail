@@ -206,7 +206,8 @@ export const extractBody = (mode = "daily") => ({
       thread_id: "t1",
       subject: "Kitchen quote",
       messages: [
-        { id: "m1", from: "Maria Ortiz <maria@example.com>", to: ["rachel@example.com"], cc: [], date: "2026-10-22T15:10:00Z", body: "I'll send the revised quote with   soft-close hinges by Monday." },
+        { id: "m1", from: "Maria Ortiz <maria.tester@example.com>", to: ["rachel@example.com"], cc: [], date: "2026-10-22T15:10:00Z", body: "I'll send the revised quote with   soft-close hinges by Monday." },
+        { id: "m2", from: "Rachel Park <rachel@example.com>", to: ["maria.tester@example.com"], cc: [], date: "2026-10-23T09:00:00Z", body: "Great. Should the hinges be soft-close or standard? Let me know by Friday." },
       ],
     },
   ],

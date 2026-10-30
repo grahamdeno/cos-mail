@@ -1,0 +1,54 @@
+name: prompt-eval
+
+# Runs the synthetic prompt eval (worker/eval) against the real models when the prompts or the
+# quote check change. Needs the repository secret ANTHROPIC_EVAL_KEY (a key from the COS Mail
+# workspace, which has its own spend limit). Without the secret the job passes and says it skipped.
+# Each run costs a few cents. The mail in the eval is synthetic; no real mail is used.
+
+on:
+  workflow_dispatch:
+  push:
+    branches-ignore: [main]
+    paths:
+      - "worker/src/prompts.ts"
+      - "worker/src/quote.ts"
+      - "worker/src/endpoints/extract.ts"
+      - "worker/src/endpoints/sort.ts"
+      - "worker/src/endpoints/draft.ts"
+      - "worker/eval/**"
+      - ".github/workflows/eval.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prompt-eval-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_EVAL_KEY }}
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - name: Skip without a key
+        if: env.ANTHROPIC_API_KEY == ''
+        working-directory: .
+        run: echo "No ANTHROPIC_EVAL_KEY secret is set, so the live prompt eval was skipped." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/checkout@v4
+        if: env.ANTHROPIC_API_KEY != ''
+      - uses: actions/setup-node@v4
+        if: env.ANTHROPIC_API_KEY != ''
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - if: env.ANTHROPIC_API_KEY != ''
+        run: npm ci --ignore-scripts
+      - name: Live prompt eval
+        if: env.ANTHROPIC_API_KEY != ''
+        run: npm run eval

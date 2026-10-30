@@ -2,7 +2,7 @@
 // The only writes this file can make are: create a draft, and update a draft this app made.
 // It cannot send, delete, trash, archive or label. The guard below enforces that.
 import { CONFIG } from "./config.js";
-import { htmlToText, trimBody } from "./trim.js";
+import { htmlToText, redactSecrets, trimBody } from "./trim.js";
 
 const BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
 
@@ -78,9 +78,9 @@ export function parseMessage(m) {
     replyTo: h("reply-to"),
     date: new Date(internalMs).toISOString(),
     internalMs,
-    subject: h("subject"),
+    subject: redactSecrets(h("subject")),
     labels: m.labelIds ?? [],
-    body: trimBody(raw) || "(no text)",
+    body: redactSecrets(trimBody(raw)) || "(no text)",
     messageIdHeader: h("message-id"),
     references: h("references"),
   };

@@ -61,3 +61,28 @@ export function htmlToText(html) {
   });
   return s.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
+
+// ---- Step 4: keys and tokens never leave the phone. ----
+// Patterns are assembled from parts so this file does not itself look like it holds a key.
+const KEY_PATTERNS = [
+  ["sk-" + "ant-", "[A-Za-z0-9_-]{10,}"],
+  ["sk-", "(?:proj-)?[A-Za-z0-9_-]{32,}"],
+  ["pplx-", "[A-Za-z0-9]{20,}"],
+  ["gh" + "[pousr]_", "[A-Za-z0-9]{20,}"],
+  ["github_" + "pat_", "[A-Za-z0-9_]{20,}"],
+  ["AI" + "za", "[0-9A-Za-z_-]{30,}"],
+  ["ya" + "29\\.", "[A-Za-z0-9_-]{20,}"],
+  ["1//" + "0", "[A-Za-z0-9_-]{20,}"],
+  ["GOC" + "SPX-", "[A-Za-z0-9_-]{10,}"],
+  ["xox" + "[abprs]-", "[A-Za-z0-9-]{10,}"],
+  ["AK" + "IA", "[0-9A-Z]{16}"],
+  ["eyJ", "[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}"],
+].map(([a, b]) => new RegExp(`(?<![A-Za-z0-9_-])${a}${b}`, "g"));
+const PRIVATE_KEY = new RegExp("-----BEGIN [A-Z ]*PRIV" + "ATE KEY-----[\\s\\S]*?(-----END [A-Z ]*PRIV" + "ATE KEY-----|$)", "g");
+
+/** Replace anything shaped like an API key, token or private key with a marker. */
+export function redactSecrets(text) {
+  let s = String(text).replace(PRIVATE_KEY, "[key removed]");
+  for (const re of KEY_PATTERNS) s = s.replace(re, "[key removed]");
+  return s;
+}

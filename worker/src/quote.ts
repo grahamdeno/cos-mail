@@ -28,3 +28,45 @@ export function findBlanks(text: string): string[] {
   for (const m of text.matchAll(/\[[^\[\]\n]{1,80}\]/g)) seen.add(m[0]);
   return [...seen];
 }
+
+/** The address in a From header: the part in <angle brackets>, or the whole value, lowercased. */
+export function emailOf(from: string): string {
+  const m = /<([^<>]+)>\s*$/.exec(from);
+  return (m ? m[1]! : from).trim().toLowerCase();
+}
+
+export type DropReason = "quote_not_found" | "quote_too_short" | "wrong_speaker" | "wrong_thread";
+
+export interface QuotedMessage {
+  thread_id: string;
+  from: string;
+  body: string;
+}
+
+/** At least two words and eight characters after normalizing, so a quote cannot be a lone "yes" or "Monday". */
+export const QUOTE_MIN_CHARS = 8;
+export const QUOTE_MIN_WORDS = 2;
+
+/**
+ * Step 4 quote check. An item survives only if its quote:
+ *  - comes from a message in the same thread (wrong_thread),
+ *  - is long enough to mean something (quote_too_short),
+ *  - appears in that message's body after normalizing (quote_not_found),
+ *  - was written by the right person (wrong_speaker): the tester for i_owe; someone else for owed_to_me and decisions.
+ */
+export function checkQuote(
+  item: { thread_id: string; quote: string; quote_message_id: string },
+  kind: "i_owe" | "owed_to_me" | "decision",
+  messages: Map<string, QuotedMessage>,
+  testerEmail: string,
+): DropReason | null {
+  const msg = messages.get(item.quote_message_id);
+  if (!msg) return "quote_not_found";
+  if (msg.thread_id !== item.thread_id) return "wrong_thread";
+  const q = normalize(item.quote);
+  if (q.length < QUOTE_MIN_CHARS || q.split(" ").length < QUOTE_MIN_WORDS) return "quote_too_short";
+  if (!normalize(msg.body).includes(q)) return "quote_not_found";
+  const byTester = emailOf(msg.from) === testerEmail.trim().toLowerCase();
+  if (kind === "i_owe" ? !byTester : byTester) return "wrong_speaker";
+  return null;
+}

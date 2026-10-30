@@ -5,10 +5,28 @@ import { BODY_MAX, ID_MAX, SHORT_MAX, arr, bool, isObj, obj, oneOf, str } from "
 import type { Handler } from "./context";
 import { optSubject, parseMessage } from "./mail";
 
+/** House style: no em-dashes. " — " becomes ", " and a bare "—" becomes "-". */
+export function noEmDash(s: string): string {
+  return s.replace(/\s*\u2014\s*/g, (m) => (/\s/.test(m) ? ", " : "-"));
+}
+
 export function parseDraftOutput(input: unknown): { subject: string; body: string } | null {
   if (!isObj(input) || typeof input.subject !== "string" || typeof input.body !== "string") return null;
   if (input.body.trim() === "") return null;
-  return { subject: input.subject.slice(0, 200), body: input.body.slice(0, 4000) };
+  return { subject: noEmDash(input.subject).slice(0, 200), body: noEmDash(input.body).slice(0, 4000) };
+}
+
+/** The model call for /draft. Shared with the prompt eval (worker/eval). */
+export function draftCall(model: string, tester: { name: string; email: string }, data: unknown, shorter: boolean) {
+  return {
+    model,
+    system: draftSystem(tester.name, tester.email),
+    user: `shorter: ${shorter}\n\n` + mailBlock(data),
+    tool: DRAFT_TOOL,
+    maxTokens: 1000,
+    temperature: 0.4,
+    parse: parseDraftOutput,
+  };
 }
 
 export const draft: Handler = async (ctx) => {
@@ -42,21 +60,7 @@ export const draft: Handler = async (ctx) => {
 
   await ctx.charge("draft", "daily");
 
-  const out = await callTool(
-    ctx.env,
-    {
-      model: ctx.env.MODEL_DRAFT,
-      system: draftSystem(ctx.tester.name, ctx.tester.email),
-      user:
-        `shorter: ${shorter}\n\n` +
-        mailBlock({ thread_id, subject, messages, decision, answer, style_examples }),
-      tool: DRAFT_TOOL,
-      maxTokens: 1000,
-      temperature: 0.4,
-      parse: parseDraftOutput,
-    },
-    ctx.meter,
-  );
+  const out = await callTool(ctx.env, draftCall(ctx.env.MODEL_DRAFT, ctx.tester, { thread_id, subject, messages, decision, answer, style_examples }, shorter), ctx.meter);
 
   return {
     subject: out.subject,

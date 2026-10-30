@@ -2,7 +2,7 @@ import { callTool } from "../claude";
 import { DAY_RE } from "../day";
 import { badRequest } from "../errors";
 import { EXTRACT_TOOL, extractSystem, mailBlock } from "../prompts";
-import { quoteInBody } from "../quote";
+import { checkQuote, type DropReason, type QuotedMessage } from "../quote";
 import { ID_MAX, arr, isObj, obj, str } from "../validate";
 import type { Handler } from "./context";
 import { optSubject, parseMessage, parseMode } from "./mail";
@@ -35,7 +35,7 @@ export interface Decision {
 export interface Dropped {
   thread_id: string;
   kind: "commitment" | "decision";
-  reason: "quote_not_found";
+  reason: DropReason;
 }
 
 const isStr = (v: unknown): v is string => typeof v === "string";
@@ -106,28 +106,41 @@ export function parseExtractOutput(input: unknown): { commitments: Commitment[];
 }
 
 /**
- * A7 quote check in the Worker: after normalizing whitespace and case, the
- * quote must appear in the body of quote_message_id from the request.
+ * Quote check in the Worker (A7, tightened in step 4): see checkQuote. The page runs the same check again.
  */
 export function quoteCheck(
-  bodies: Map<string, string>,
+  messages: Map<string, QuotedMessage>,
   out: { commitments: Commitment[]; decisions: Decision[] },
+  testerEmail: string,
 ): { commitments: Commitment[]; decisions: Decision[]; dropped: Dropped[] } {
   const dropped: Dropped[] = [];
   const commitments = out.commitments.filter((c) => {
-    const ok = quoteInBody(c.quote, bodies.get(c.quote_message_id));
-    if (!ok) dropped.push({ thread_id: c.thread_id, kind: "commitment", reason: "quote_not_found" });
-    return ok;
+    const reason = checkQuote(c, c.direction, messages, testerEmail);
+    if (reason) dropped.push({ thread_id: c.thread_id, kind: "commitment", reason });
+    return !reason;
   });
   const decisions = out.decisions
     .filter((d) => {
-      const ok = quoteInBody(d.quote, bodies.get(d.quote_message_id));
-      if (!ok) dropped.push({ thread_id: d.thread_id, kind: "decision", reason: "quote_not_found" });
-      return ok;
+      const reason = checkQuote(d, "decision", messages, testerEmail);
+      if (reason) dropped.push({ thread_id: d.thread_id, kind: "decision", reason });
+      return !reason;
     })
     .sort((a, b) => a.rank - b.rank)
     .map((d, i) => ({ ...d, rank: i + 1 }));
   return { commitments, decisions, dropped };
+}
+
+/** The model call for /extract. Shared with the prompt eval (worker/eval) so both send exactly the same thing. */
+export function extractCall(model: string, tester: { name: string; email: string }, today: string, threads: unknown[]) {
+  return {
+    model,
+    system: extractSystem(tester.name, tester.email, today),
+    user: `Find the commitments and decisions in these ${threads.length} threads.\n\n${mailBlock(threads)}`,
+    tool: EXTRACT_TOOL,
+    maxTokens: 8000,
+    temperature: 0,
+    parse: parseExtractOutput,
+  };
 }
 
 export const extract: Handler = async (ctx) => {
@@ -136,7 +149,7 @@ export const extract: Handler = async (ctx) => {
   const today = str(body, "today", "today");
   if (!DAY_RE.test(today)) throw badRequest("today");
   const rawThreads = arr(body, "threads", "threads", { min: 1, max: 20 });
-  const bodies = new Map<string, string>();
+  const index = new Map<string, QuotedMessage>();
   const threads = rawThreads.map((t, i) => {
     const field = `threads[${i}]`;
     const o = obj(t, field);
@@ -145,8 +158,8 @@ export const extract: Handler = async (ctx) => {
     const rawMsgs = arr(o, "messages", `${field}.messages`, { min: 1, max: 15 });
     const messages = rawMsgs.map((m, j) => {
       const msg = parseMessage(m, `${field}.messages[${j}]`, { requireTo: true });
-      if (bodies.has(msg.id)) throw badRequest(`${field}.messages[${j}].id`);
-      bodies.set(msg.id, msg.body);
+      if (index.has(msg.id)) throw badRequest(`${field}.messages[${j}].id`);
+      index.set(msg.id, { thread_id, from: msg.from, body: msg.body });
       return msg;
     });
     return { thread_id, subject, messages };
@@ -154,20 +167,8 @@ export const extract: Handler = async (ctx) => {
 
   await ctx.charge("extract", mode);
 
-  const out = await callTool(
-    ctx.env,
-    {
-      model: ctx.env.MODEL_EXTRACT,
-      system: extractSystem(ctx.tester.name, ctx.tester.email, today),
-      user: `Find the commitments and decisions in these ${threads.length} threads.\n\n${mailBlock(threads)}`,
-      tool: EXTRACT_TOOL,
-      maxTokens: 8000,
-      temperature: 0,
-      parse: parseExtractOutput,
-    },
-    ctx.meter,
-  );
+  const out = await callTool(ctx.env, extractCall(ctx.env.MODEL_EXTRACT, ctx.tester, today, threads), ctx.meter);
 
-  const checked = quoteCheck(bodies, out);
+  const checked = quoteCheck(index, out, ctx.tester.email);
   return { ...checked, usage: { input_tokens: ctx.meter.in, output_tokens: ctx.meter.out } };
 };

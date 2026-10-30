@@ -2,8 +2,8 @@
 // keep the results on this phone. Bodies stay in memory and are dropped when a run ends.
 import { CONFIG } from "./config.js";
 import { addDays, daysBetween, dayKey } from "./day.js";
-import { buildRaw, pickRecipient } from "./gmail.js";
-import { normalize, quoteInBody } from "./quote.js";
+import { buildRaw, parseAddress, pickRecipient } from "./gmail.js";
+import { checkQuote, normalize } from "./quote.js";
 import { ApiError } from "./api.js";
 
 export const todayKey = (nowMs = Date.now()) => dayKey(nowMs, CONFIG.dayTz, CONFIG.dayStartHour);
@@ -37,6 +37,26 @@ export function gmailQuery(mode, cutoffMs) {
 }
 
 const stopCodes = new Set(["daily_limit", "backfill_used"]);
+
+/**
+ * True for the tester's own address, or another address that carries both their first and last name
+ * (a work or school copy of themselves). Family who share a last name do not match.
+ */
+export function isSelfAddress(addr, me) {
+  const email = parseAddress(addr).email;
+  if (!email) return false;
+  if (email === me.email.toLowerCase()) return true;
+  const tokens = String(me.name ?? "").toLowerCase().split(/\s+/).map((t) => t.replace(/[^a-z]/g, "")).filter((t) => t.length >= 3);
+  if (tokens.length < 2) return false;
+  const local = email.split("@")[0].replace(/[^a-z]/g, "");
+  return local.includes(tokens[0]) && local.includes(tokens[tokens.length - 1]);
+}
+
+/** A message the tester wrote to at least one other person (not a note to self). */
+export function writtenToOthers(m, me) {
+  if (!isSelfAddress(m.from, me)) return false;
+  return [...m.to, ...m.cc].some((a) => !isSelfAddress(a, me));
+}
 
 export function toLedgerItem(c, dayNow) {
   return {
@@ -103,7 +123,7 @@ export async function runPipeline({ mode, cutoffMs = 0, gmail, api, store, me, n
   // 1. Sort inbound messages. Newest first, as many as this mode's calls allow.
   const inbound = threads
     .flatMap((t) => t.messages)
-    .filter((m) => m.fromEmail !== meEmail && m.internalMs >= cutoffMs)
+    .filter((m) => !isSelfAddress(m.from, me) && m.internalMs >= cutoffMs) // notes from the tester's other addresses are not sorted
     .sort((a, b) => b.internalMs - a.internalMs)
     .slice(0, cfg.sortCalls * CONFIG.sortPerCall);
   const verdict = new Map();
@@ -133,16 +153,17 @@ export async function runPipeline({ mode, cutoffMs = 0, gmail, api, store, me, n
   out.handled = handled;
 
   // 2. Read only what needs the tester, plus threads where the tester wrote (their own promises).
-  const mine = new Set(threads.filter((t) => t.messages.some((m) => m.fromEmail === meEmail && m.internalMs >= cutoffMs)).map((t) => t.thread_id));
+  // Notes to self (all recipients are the tester) are skipped: no promises to anyone, and no cost.
+  const mine = new Set(threads.filter((t) => t.messages.some((m) => writtenToOthers(m, me) && m.internalMs >= cutoffMs)).map((t) => t.thread_id));
   const wanted = threads
     .filter((t) => needThreads.has(t.thread_id) || mine.has(t.thread_id))
     .sort((a, b) => Number(needThreads.has(b.thread_id)) - Number(needThreads.has(a.thread_id)) || b.messages.at(-1).internalMs - a.messages.at(-1).internalMs)
     .slice(0, cfg.extractCalls * CONFIG.extractPerCall);
 
-  const bodies = new Map();
+  const sent = new Map(); // message id -> { thread_id, from, body } exactly as sent, for the quote check
   const payloads = wanted.map((t) => {
     const msgs = t.messages.slice(-CONFIG.threadMsgMax);
-    for (const m of msgs) bodies.set(m.id, m.body);
+    for (const m of msgs) sent.set(m.id, { thread_id: t.thread_id, from: m.from, body: m.body });
     return { thread_id: t.thread_id, subject: t.subject, messages: msgs.map(extractPayloadMsg) };
   });
 
@@ -164,9 +185,9 @@ export async function runPipeline({ mode, cutoffMs = 0, gmail, api, store, me, n
     }
   }
 
-  // 3. The page checks every quote again against the text it sent. No match, no item.
-  const okC = commitments.filter((c) => quoteInBody(c.quote, bodies.get(c.quote_message_id)));
-  const okD = decisions.filter((d) => quoteInBody(d.quote, bodies.get(d.quote_message_id)));
+  // 3. The page checks every item again against the text it sent: right thread, real words, right speaker.
+  const okC = commitments.filter((c) => !checkQuote(c, c.direction, sent, meEmail));
+  const okD = decisions.filter((d) => !checkQuote(d, "decision", sent, meEmail));
   out.dropped += commitments.length - okC.length + decisions.length - okD.length;
   out.commitments = okC.length;
   out.decisions = okD.length;
