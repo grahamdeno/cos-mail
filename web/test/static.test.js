@@ -127,3 +127,10 @@ test("the service worker's shell list names real files", () => {
   }
   for (const f of jsFiles) assert.ok(sw.includes(`/js/${relative(join(PUBLIC, "js"), f)}`), `${relative(PUBLIC, f)} is in the shell cache`);
 });
+
+test("CSP lets Google's sign-in button style itself, and no wider than that", () => {
+  const csp = read(join(PUBLIC, "_headers"));
+  assert.match(csp, /style-src-attr 'unsafe-inline'/);
+  assert.ok(!/script-src[^;]*'unsafe-inline'/.test(csp), "scripts stay locked");
+  assert.ok(!/style-src 'self'[^;]*'unsafe-inline'/.test(csp), "style elements stay locked");
+});
