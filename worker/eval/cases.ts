@@ -14,7 +14,8 @@ export interface Msg { id: string; from: string; to: string[]; cc?: string[]; da
 export interface Thread { thread_id: string; subject: string; messages: Msg[] }
 
 export interface ExpectC { direction: "i_owe" | "owed_to_me"; phrase: string; due?: string; status?: "open" | "done" | "possibly_done"; confidence?: "high" | "low" }
-export interface ExpectD { phrase: string }
+/** A decision is found when its quote overlaps any of the phrases (the model may pick either sentence). */
+export interface ExpectD { phrase: string; or?: string[] }
 export interface Case {
   thread: Thread;
   commitments?: ExpectC[];
@@ -90,7 +91,7 @@ export const CASES: Case[] = [
     thread: { thread_id: "c09", subject: "Field trip form", messages: [
       m("c09a", "Ms. Alvarez <alvarez@school.example.org>", PAT, "2026-10-28T13:00:00Z", "Please sign and return the field trip form by Wednesday so Sam can attend. Will he need a bag lunch?"),
     ] },
-    decisions: [{ phrase: "Will he need a bag lunch?" }],
+    decisions: [{ phrase: "Will he need a bag lunch?", or: ["sign and return the field trip form by Wednesday"] }],
   },
   {
     thread: { thread_id: "c10", subject: "Team dinner", messages: [

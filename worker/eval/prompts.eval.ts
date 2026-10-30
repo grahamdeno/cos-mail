@@ -104,7 +104,7 @@ describe.skipIf(!KEY)("prompt eval (live models)", () => {
       const usedD = new Set<Decision>();
       for (const e of c.decisions ?? []) {
         expD++;
-        const g = gotD.find((x) => !usedD.has(x) && overlaps(x.quote, e.phrase));
+        const g = gotD.find((x) => !usedD.has(x) && [e.phrase, ...(e.or ?? [])].some((p) => overlaps(x.quote, p)));
         if (!g) { misses.push(`${tid} decision: "${e.phrase}"`); continue; }
         usedD.add(g); hitD++;
       }
