@@ -118,6 +118,39 @@ describe("auth and origin", () => {
     expect(mock.certCalls).toBe(1);
   });
 
+  it("5 requests with an unknown kid inside a minute cause exactly 1 certs fetch", async () => {
+    const env = await setup();
+    for (let i = 0; i < 5; i++) {
+      const r = await call(env, "/api/sort", sortBody(), { token: await idToken({ kid: "rotated-kid" }) });
+      expect(r.status).toBe(401);
+    }
+    expect(mock.certCalls).toBe(1);
+    // Known kids keep working from the cache with no extra fetch.
+    expect((await call(env, "/api/sort", { messages: [] })).status).toBe(400);
+    expect(mock.certCalls).toBe(1);
+  });
+
+  it("unknown kid on a fresh cache refetches at most once per 60 s", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-10-30T14:00:00Z"));
+      const env = await setup();
+      expect((await call(env, "/api/sort", { messages: [] })).status).toBe(400); // primes the cache
+      expect(mock.certCalls).toBe(1);
+      vi.setSystemTime(new Date("2026-10-30T14:01:01Z")); // cache still fresh (max-age 6 h), 61 s later
+      for (let i = 0; i < 5; i++) {
+        expect((await call(env, "/api/sort", sortBody(), { token: await idToken({ kid: "rotated-kid" }) })).status).toBe(401);
+        vi.setSystemTime(new Date(Date.now() + 10_000));
+      }
+      expect(mock.certCalls).toBe(2);
+      vi.setSystemTime(new Date("2026-10-30T14:02:05Z")); // more than 60 s after the refetch
+      expect((await call(env, "/api/sort", sortBody(), { token: await idToken({ kid: "rotated-kid" }) })).status).toBe(401);
+      expect(mock.certCalls).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("404 unknown path and 405 non-POST (after auth)", async () => {
     const env = await setup();
     const nf = await call(env, "/api/nope", {});

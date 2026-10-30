@@ -22,11 +22,14 @@ interface JwksCache {
 
 let cache: JwksCache | null = null;
 let inflight: Promise<JwksCache> | null = null;
+let lastFetchAt = -Infinity;
+const UNKNOWN_KID_REFETCH_MS = 60_000;
 
 /** Test hook: forget cached Google keys. */
 export function resetJwksCache(): void {
   cache = null;
   inflight = null;
+  lastFetchAt = -Infinity;
 }
 
 function maxAgeSeconds(cacheControl: string | null): number {
@@ -55,9 +58,13 @@ async function fetchKeys(nowMs: number): Promise<JwksCache> {
 }
 
 async function getKey(kid: string, nowMs: number): Promise<CryptoKey | null> {
-  if (cache && cache.expiresAt > nowMs && cache.keys.has(kid)) return cache.keys.get(kid) ?? null;
-  // Refresh when expired, or once when an unknown kid appears (Google rotates keys).
+  const fresh = cache !== null && cache.expiresAt > nowMs;
+  if (fresh && cache!.keys.has(kid)) return cache!.keys.get(kid) ?? null;
+  // Unknown kid on a fresh cache (Google may have rotated keys): refetch at most
+  // once per UNKNOWN_KID_REFETCH_MS, otherwise reject without a network call.
+  if (fresh && nowMs - lastFetchAt < UNKNOWN_KID_REFETCH_MS) return null;
   if (!inflight) {
+    lastFetchAt = nowMs;
     inflight = fetchKeys(nowMs).finally(() => {
       inflight = null;
     });
