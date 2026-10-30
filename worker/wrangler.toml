@@ -1,0 +1,18 @@
+name = "cos-mail-api"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+routes = [{ pattern = "cos.tangomike.app/api/*", zone_name = "tangomike.app" }]
+
+[[kv_namespaces]]
+binding = "COS_KV"
+id = "<filled in after the namespace is created>"
+
+[vars]
+GOOGLE_CLIENT_ID = "456735134102-53s6afv6b316sj1bes9phmb71rc78mi5.apps.googleusercontent.com"
+OWNER_EMAIL = "graham.denoyer@gmail.com"
+ALLOWED_ORIGINS = "https://cos.tangomike.app,http://localhost"
+MODEL_SORT = "claude-haiku-5-5"
+MODEL_EXTRACT = "claude-sonnet-5-5"
+MODEL_DRAFT = "claude-sonnet-5-5"
+DAY_TZ = "America/New_York"
+DAY_START_HOUR = "4"
