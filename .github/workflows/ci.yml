@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  pull_request:
+    paths:
+      - "worker/**"
+      - "README.md"
+      - ".github/workflows/ci.yml"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - run: npm ci --ignore-scripts
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Tests (no network; includes the no-send and no-secrets repo scan)
+        run: npm test
