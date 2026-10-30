@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "worker/**"
+      - "web/**"
       - "README.md"
       - ".github/workflows/ci.yml"
   push:
@@ -29,4 +30,20 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Tests (no network; includes the no-send and no-secrets repo scan)
+        run: npm test
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # 22.18 or newer runs the page tests, which import two Worker .ts files, without a flag.
+          node-version: 22
+      - name: Typecheck the page (checkJs, no build step)
+        run: npx --yes -p typescript@7.0.2 tsc -p .
+      - name: Tests (no network, no browser; includes the no-send, no-token-storage and no-secrets checks)
         run: npm test
